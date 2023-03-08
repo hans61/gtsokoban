@@ -11,7 +11,7 @@ https://forum.gigatron.io/
 # My Version gtsokoban
 ![gtsokoban for Gigatron](pic/gtsokoban-gigatron.jpg)
 
-The program file was created with the compiler gtBASIC.
+The program file was created with the compiler gtBASIC v1.0.9R. Changes may be necessary for other versions.
 
 https://forum.gigatron.io/viewtopic.php?t=232
 
