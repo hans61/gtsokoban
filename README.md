@@ -24,7 +24,11 @@ The 32k version has only 66 levels compared to the 64k version with 90 levels.
 
 #### Operation:
 The arrow keys on the keyboard or gamepad move the player.
+
 The key + or B on the gamepad change to the next level.
+
 The key - or A on the gamepad switch to the previous level, for level 1 to the last one in the game.
+
 The n/N or Start button on the gamepad restarts the current level.
+
 The r/R or Select key on the gamepad will undo the last move made. Up to 50 moves can be undone.
