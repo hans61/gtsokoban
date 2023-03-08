@@ -1,0 +1,279 @@
+_runtimePath_ "../../runtime"
+'_runtimeStart_ &h7FFF										' 32k
+_runtimeStart_ &hFFFF										' 64k
+_arraysStart_ &hFFFF										' 64k
+_codeRomType_ ROMv3
+
+'defines the amount of contiguous RAM needed for sprite stripes, (in this case 40*6 + 1)
+_spriteStripeChunks_ 7, &h0200, descending
+
+mode 1
+set FGBG_COLOUR, &h3F00
+cls
+dim playfield%(20,16)
+'module "gtsokoban-maxlevel75.m"							' 32k
+module "gtsokoban-maxlevel90.m"								' 64k
+
+const wall = 0
+const boxtarget = 1
+const box = 3
+const player = 2
+const target = 4
+const space = 5
+
+const boxInTarget = (target * 16) + box
+const spaceOnSpace = (space * 16) + space
+const boxOnSpace = (space * 16) + box
+const playerOnSpace = (space * 16) + player
+const targetOnTarget = (target * 16) + target
+const playerOnTarget = (target * 16) + player
+
+px% = 0														' player position x
+py% = 0														' player position y
+dx% = 0														' move player x direction
+dY% = 0														' move player y direction
+kx% = 0														' box position x
+kY% = 0														' box position y
+			
+level = 1													' current level
+levelName = 0
+moves = 0													' move counter
+boxes% = 0			
+boxAtTarget% = 0											' counter boxes in target
+const maxBack = 89											' maximum possible back steps (0..maxBack)
+dim backStore%(maxBack) = 0									' Last In First Out ring buffer
+bptrb% = 0													' pointer to beginning
+bptre% = 0													' pointer to end
+
+' load sprites
+load sprite, ./res/wall6x6.tga, wall
+load sprite, ./res/boxtarget6x6.tga, boxtarget
+load sprite, ./res/box6x6.tga, box
+load sprite, ./res/player6x6.tga, player
+load sprite, ./res/target6x6.tga, target
+load sprite, ./res/black6x6.tga, space
+
+offsety = 17
+offsetx = 17
+' load level and draw playground
+gosub loadlevel												
+
+main:
+	dx% = 0 : dy% = 0
+	wait 4
+	button% = get("SERIAL_RAW") XOR 255
+	if (button = &h8D) OR (button = &hAD) OR (button = &h20) then goto ret	' r|R|[Select] move back
+	button% = get("BUTTON_STATE") XOR 255
+	if (button = &hD4) OR (button = &h80) then goto nextlev					' +|[B] next level
+	if (button = &hD2) OR (button = &h40) then goto back					' -|[A] previous level
+	if (button = &hB1) OR (button = &h91) OR (button = &h10) then goto res	' n|N|[Start] restart level
+	if (button = &hB8) OR (button = &h98) then goto golev					' g|G
+	if button = 1 then dx = 1												' right
+	if button = 2 then dx = -1												' left
+	if button = 4 then dy = 1												' bottom
+	if button = 8 then dy = -1												' top
+	if (dy <> 0) OR (dx <> 0) then gosub moveplayer
+    goto main
+ret:
+	gosub moveBack
+	goto nokey
+back:
+	level = level - 1
+	if level < 1 then level = maxlevel
+res:
+	gosub loadlevel
+	goto nokey
+golev:
+	'at offsetx,10 : print "Go to Level: " : input i;
+	at offsetx,1 : input i,"  Go to Level: "2;
+	if (i > 0) AND (i <= maxlevel) then level = i
+	gosub loadlevel
+	goto nokey
+nextlev:
+	level = level + 1
+	if level > maxlevel then level = 1
+	gosub loadlevel
+nokey:
+	button% = get("BUTTON_STATE") XOR 255
+	if button <> 0 then goto nokey												' wait for button released
+    goto main
+
+moveplayer:
+	if (playfield(px+dx, py+dy) AND &h0F) = space then goto movep1
+	if (playfield(px+dx, py+dy) AND &h0F) = target  then goto movep1
+	if (playfield(px+dx, py+dy) AND &h0F) = box then goto movep0
+	return
+movep0:
+	if (playfield(px+dx+dx, py+dy+dy) AND &h0F) = space then goto movebox		' behind box is free space
+	if (playfield(px+dx+dx, py+dy+dy) AND &h0F) = target then goto movebox		' behind box is free target
+	return
+movebox:
+	playfield(px, py) = (playfield(px, py) AND &hF0) + (playfield(px, py) LSR 4)' background in playing field reset
+	sprite noFlip, (playfield(px, py) AND &h0F), px*6+offsetx, py*6+offsety    	' background under player sign
+	px = px + dx : py = py + dy                             					' new position player
+	gosub incPointer
+	backStore(bptre) = ((dy + 1) LSL 2) + dx + 129
+	if playfield(px, py) = boxInTarget then dec boxAtTarget
+	sprite noFlip, player, px*6+offsetx, py*6+offsety       					' player sign (before box)
+	kx = px + dx : ky = py + dy                             					' new position  box
+	playfield(kx, ky) = (playfield(kx, ky) AND &hF0) + box           			' set playField to box
+	if playfield(kx, ky) = boxInTarget then inc boxAtTarget
+	sprite noFlip, box, kx*6+offsetx, ky*6+offsety     							' box sign
+	if playfield(kx, ky) = boxInTarget then sprite noFlip, boxtarget, kx*6+offsetx, ky*6+offsety     ' box sign
+	if boxes = boxAtTarget then gosub nextlevel                                 ' if the number of boxes is equal to the target, then the level is completed
+	goto movep3
+movep1:
+	playfield(px, py) = (playfield(px, py) AND &hF0) + (playfield(px, py) LSR 4)' background in playing field reset
+	sprite noFlip, (playfield(px, py) AND &h0F), px*6+offsetx, py*6+offsety    	' background under player sign
+	px = px + dx : py = py + dy                             					' new position player
+	gosub incPointer
+	backStore(bptre) = ((dy + 1) LSL 2) + dx + 1
+	notice = dy + 1 : 
+	playfield(px, py) = (playfield(px, py) AND &hF0) + player                 	' set playField to player
+	sprite noFlip, (playfield(px, py) AND &h0F), px*6+offsetx, py*6+offsety		' player sign
+movep3:
+	moves = moves + 1
+	at 83,1 : print "MOVES: ";moves
+	wait 8
+	return
+
+incPointer:
+	if backStore(bptre) = 0 then return
+	bptre = bptre + 1
+	if bptre > maxBack then bptre = 0
+	if bptre <> bptrb then return
+	bptrb = bptrb + 1
+	if bptrb > maxBack then bptrb = 0
+	return
+
+nextlevel:
+	level = level +1
+	if level > maxlevel then level = 1
+	gosub loadlevel
+	return
+	
+moveBack:
+	button = 0
+	wait 8
+	if backStore(bptre) = 0 then return											' no move backward available return
+	inc moves																	' go backwards then increment moves
+	at 83,1 : print "MOVES: ";moves;"  "
+	dx = (backStore(bptre) AND 3) - 1											' move delta player
+	dy = ((backStore(bptre) LSR 2) AND 3) - 1
+	if ((backStore(bptre) AND &h80) = 0)  then noBox1							' no box moved
+	' hier wird Box mitverschoben
+	kx = px + dx : ky = py + dy
+	' box is currently on kx, ky and will be moved to the position of px, py
+	if ((playfield(kx, ky)  LSR 4) AND &h0F) = target then dec boxAtTarget		' Feld wo Box vorher stand war Ziel, Boxen im Ziel verringern
+	playfield(kx, ky) = (playfield(kx, ky) AND &hF0) + (playfield(kx, ky) LSR 4)' background in playing field reset
+	sprite noFlip, (playfield(kx, ky) AND &h0F), kx*6+offsetx, ky*6+offsety    	' background under box sign
+noBox1:	
+	playfield(px, py) = (playfield(px, py) AND &hF0) + (playfield(px, py) LSR 4)' background in playing field reset
+	sprite noFlip, (playfield(px, py) AND &h0F), px*6+offsetx, py*6+offsety    	' background under player sign
+	if ((backStore(bptre) AND &h80) = 0)  then noBox
+	' hier wird Box mitverschoben
+	kx = px : ky = py ' alte Position des Spieler ist neue Position des Box wenn vorhanden
+	playfield(kx, ky) = (playfield(kx, ky) AND &hF0) + box           			' set playField to box
+	if (playfield(kx, ky) = boxInTarget) then inc boxAtTarget					' neue Position der Box ist Ziel, Boxen im Ziel erhöhen
+	sprite noFlip, (playfield(kx, ky) AND &h0F), kx*6+offsetx, ky*6+offsety     ' box sign
+	if playfield(kx, ky) = boxInTarget then sprite noFlip, boxtarget, kx*6+offsetx, ky*6+offsety     ' box sign
+noBox:
+	px = px - dx : py = py - dy                             					' new position player
+	playfield(px, py) = (playfield(px, py) AND &hF0) + player                 	' set playField to player
+	sprite noFlip, (playfield(px, py) AND &h0F), px*6+offsetx, py*6+offsety		' player sign
+	backStore(bptre) = 0
+	if bptre = bptrb then return
+	bptre = bptre - 1
+	if bptre < 0 then bptre = maxBack
+	return
+
+
+loadlevel:
+	cls
+	moves = 0
+	boxes = 0
+	boxAtTarget = 0
+	bptrb = 0
+	backStore(bptrb) = 0
+	bptrb = 0
+	bptre = 0
+	' Clear the playing field
+	for y = 0 to 16
+		for x = 0 to 20
+			playfield(x, y) = (space * 16) + space
+		next x
+	next y
+	' level decompress
+	' The first byte contains the number of data bytes. This is followed by a byte x position and a byte y position of the player.
+	' Then the actual data bytes follow. The code consists of a 2 bit sequence.	
+	' in the first data duo 0 = skipped (to fill up bytes), 1 = space, 2 = wall, 3 = another duo follows
+	' following duo 0 = box, 1 = target, 2 = box at target, 3 = end of line in playfield, go to next line
+	i = 4											' pointer in data array, 0 is length
+	p = 4											' pointer bits in byte, 0..3 always 2 bit, 4 automatically loads first byte
+	b = 0											' cache for byte
+	w = 0											' 2 bit value from byte
+	x = -1											' x coordinate in game field, -1 because incremented at start
+	y = 0											' y coordinate in game field
+	lidx = level
+	dec lidx
+loop1:
+	inc x											' x coordinate in game field
+	x = x.lo										' corrected inc problem, possible since 0<=x<=255
+	if p < 4 then loop2								' still bits available get no new byte
+	b = levels(lidx,i)								' get next byte
+	p = 0											' reset bit counter
+	inc i											' byte fetched, pointer to next
+	if i > levels(lidx,0) + 4 then goto ende		' if no wide byte available end
+loop2:
+	w = b AND 3										' value is lower 2 bit from byte
+	b = b LSR 2										' byte 2 bit shift right
+	inc p											' increase pointer in byte
+	if w <> 1 then loop3							' if not 1 next, 1 = space
+	playfield(x, y) = spaceOnSpace					' set playing field to space, need not be drawn
+	goto loop1										' further in the field
+loop3:
+	if w <> 2 then loop4							' if not 2 next, 2 = wall
+	playfield(x, y) = wall							' set playing field to wall
+	sprite noFlip, wall, x*6+offsetx, y*6+offsety	' draw wall
+	goto loop1										' further in the field
+loop4:
+	if w <> 3 then loop1							' if not 3 then only 0 remains, will be skipped
+	if p < 4 then loop5								' for sequence duo check if new byte must be fetched
+	b = levels(lidx,i)
+	p = 0
+	inc i
+	if i > levels(lidx,0) + 4 then goto ende
+loop5:
+	w = b AND 3										' sequence duo from byte
+	b = b LSR 2										' byte 2 bit shift right
+	inc p
+	if w <> 0 then loop6							' if not 0 next, 0 = box
+	inc boxes										' total number of boxes in the game
+	playfield(x, y) = boxOnSpace					' set playing field to box, the background is space
+	sprite noFlip, box, x*6+offsetx, y*6+offsety	' draw box
+	goto loop1										' further in the field
+loop6:
+	if w <> 1 then loop7							' if not 1 next, 1 = target
+	playfield(x, y) = targetOnTarget
+	sprite noFlip, target, x*6+offsetx, y*6+offsety
+	goto loop1										' further in the field
+loop7:
+	if w <> 2 then loop8							' if not 2 next, 2 = box of target
+	inc boxAtTarget
+	inc boxes
+	playfield(x, y) = boxInTarget
+	sprite noFlip, boxtarget, x*6+offsetx, y*6+offsety
+	goto loop1										' further in the field
+loop8:
+	x = -1											' duo is 3, 3 = end of line
+	inc y											' x and y to the beginning of the next line
+	goto loop1										' further in the field
+ende:
+	px = levels(lidx,1)
+	py = levels(lidx,2)
+	levelName = levels(lidx,3)
+	playfield(px, py) = playerOnSpace
+	sprite noFlip, player, px*6+offsetx, py*6+offsety
+	at 17,1 : print "LEVEL: ";levelName
+	at 83,1 : print "MOVES: ";moves
+	return
